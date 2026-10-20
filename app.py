@@ -1,5 +1,6 @@
 import io
 from datetime import datetime
+from difflib import SequenceMatcher
 
 import pandas as pd
 import streamlit as st
@@ -171,7 +172,36 @@ if waitrose_file is not None:
                 return "".join(ch.lower() for ch in str(value).strip() if ch.isalnum())
 
             def normalise_postcode(value):
+                # Trim leading/trailing whitespace and ignore spaces/punctuation
+                # so auditor-entered postcodes match the site export reliably.
                 return "".join(ch for ch in normalise_match(value) if ch.isalnum())
+
+            def fuzzy_name_match(name_key, site_rows, name_lookup):
+                """Return a unique exact/fuzzy site-name match, or None if ambiguous."""
+                if not name_key:
+                    return None
+                exact = name_lookup.get(name_key)
+                if exact is not None:
+                    return exact
+
+                # Allow small differences such as missing commas, extra words,
+                # or minor spelling/spacing variations, but avoid weak matches.
+                scored = []
+                for _, candidate in site_rows[site_rows["_name_key"].ne("")].iterrows():
+                    candidate_key = candidate["_name_key"]
+                    score = SequenceMatcher(None, name_key, candidate_key).ratio()
+                    # Also score containment generously (e.g. a shortened store name).
+                    if name_key in candidate_key or candidate_key in name_key:
+                        score = max(score, min(len(name_key), len(candidate_key)) / max(len(name_key), len(candidate_key)))
+                    if score >= 0.84:
+                        scored.append((score, candidate))
+                if not scored:
+                    return None
+                scored.sort(key=lambda item: item[0], reverse=True)
+                best_score = scored[0][0]
+                best = [row for score, row in scored if abs(score - best_score) < 0.015]
+                # Never guess when multiple sites are equally plausible.
+                return best[0] if len(best) == 1 else None
 
             store_name_question = next(
                 (c for c in odp_question_columns
@@ -210,7 +240,7 @@ if waitrose_file is not None:
                     if store_name_question and store_name_question in odp_source.columns:
                         name_key = normalise_match(odp_source.iloc[row_idx][store_name_question])
                         if name_key:
-                            matched_site = name_lookup.get(name_key)
+                            matched_site = fuzzy_name_match(name_key, sites, name_lookup)
                     if matched_site is None and store_postcode_question and store_postcode_question in odp_source.columns:
                         postcode_key = normalise_postcode(odp_source.iloc[row_idx][store_postcode_question])
                         if postcode_key:
@@ -275,3 +305,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
+
