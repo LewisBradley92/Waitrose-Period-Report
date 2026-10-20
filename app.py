@@ -52,23 +52,49 @@ if item_column is None:
 item_values = raw[item_column].fillna("").astype(str).str.strip()
 odp_mask = item_values.str.casefold().eq("rapid delivery")
 
-# Each output uses the current export's columns, not a fixed previous-period template.
-main_report = raw.loc[~odp_mask].copy().reset_index(drop=True)
-odp_report = raw.loc[odp_mask].copy().reset_index(drop=True)
+# Keep key audit-identification fields plus the current period's question fields.
+# Exclude administrative/export metadata such as responsibility, approved_by_email,
+# tokens, payment fields and workflow fields.
+IDENTIFIER_COLUMNS = [
+    "order_internal_id", "internal_id", "site_internal_id", "site_name",
+    "site_address_1", "site_address_2", "site_address_3", "site_post_code",
+    "item_to_order", "date_of_visit_local", "time_of_visit_local",
+    "primary_result", "secondary_result",
+]
 
-# Keep the raw export available for checking, while reporting the split clearly.
+# The audit-question block starts at the first question field. All fields after
+# that point are treated as question/answer fields, so question sets can change.
+first_question = next(
+    (
+        i for i, column in enumerate(raw.columns)
+        if column.casefold().startswith("were you able to successfully conduct this audit")
+        or column.casefold().startswith("please detail why you were unable to conduct this audit")
+    ),
+    None,
+)
+if first_question is None:
+    st.error("Could not identify the audit-question columns in this export. Please check the CSV format.")
+    st.stop()
+
+question_columns = list(raw.columns[first_question:])
+report_columns = [c for c in IDENTIFIER_COLUMNS if c in raw.columns]
+report_columns += [c for c in question_columns if c not in report_columns]
+
+main_report = raw.loc[~odp_mask, report_columns].copy().reset_index(drop=True)
+odp_report = raw.loc[odp_mask, report_columns].copy().reset_index(drop=True)
+
+# Summary counts for the two report tabs.
 c1, c2, c3 = st.columns(3)
 c1.metric("Total audits in export", f"{len(raw):,}")
 c2.metric("Main report", f"{len(main_report):,}")
 c3.metric("ODPs — Rapid Delivery", f"{len(odp_report):,}")
 
 st.caption(
-    f"Detected {len(raw.columns):,} columns in this period's export. "
-    "All current-period columns are included in the report; columns/questions not present "
-    "in this export are not added."
+    f"Detected {len(question_columns):,} question columns in this period's export. "
+    "Administrative export metadata is excluded; current-period question fields are included."
 )
 
-tab_main, tab_odp, tab_raw = st.tabs(["Main report", "ODPs", "Raw export"])
+tab_main, tab_odp = st.tabs(["Main report", "ODPs"])
 
 with tab_main:
     st.subheader("Main report")
@@ -92,17 +118,11 @@ with tab_odp:
         mime="text/csv",
     )
 
-with tab_raw:
-    st.subheader("Raw export")
-    st.caption("The complete current-period CSV, before the ODP split.")
-    st.dataframe(raw, use_container_width=True, hide_index=True)
-
-# Excel output: two report sheets plus the original complete export for traceability.
+# Excel output contains exactly the two report sheets.
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     main_report.to_excel(writer, sheet_name="Main Report", index=False)
     odp_report.to_excel(writer, sheet_name="ODPs", index=False)
-    raw.to_excel(writer, sheet_name="Raw Export", index=False)
 
     # Make the sheets easier to read without changing cell contents.
     for worksheet in writer.book.worksheets:
@@ -123,3 +143,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
+
