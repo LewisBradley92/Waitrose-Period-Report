@@ -14,7 +14,8 @@ st.caption(
 
 with st.sidebar:
     st.header("Current period")
-    csv_file = st.file_uploader("Audit export (CSV)", type=["csv"])
+    csv_file = st.file_uploader("Audit export (CSV)", type=["csv"], key="audit_csv")
+    waitrose_file = st.file_uploader("Waitrose site export (CSV)", type=["csv"], key="waitrose_sites_csv")
     st.divider()
     st.caption(
         "Audits where Item to order is exactly 'Rapid Delivery' are placed on the ODPs tab. "
@@ -151,6 +152,81 @@ odp_question_columns = [
 ]
 odp_report = build_report(odp_source, odp_question_columns)
 
+# Optional Waitrose site lookup is applied to ODPs only. Match by the
+# auditor-provided store name first, then by postcode; unmatched rows stay as-is.
+if waitrose_file is not None:
+    try:
+        sites = pd.read_csv(waitrose_file, low_memory=False)
+        sites.columns = [str(column).strip() for column in sites.columns]
+        required_site_columns = {"name", "address_1", "address_2", "address_3", "post_code", "code"}
+        if not required_site_columns.issubset(set(sites.columns)):
+            st.error(
+                "The Waitrose site export is missing required columns: "
+                + ", ".join(sorted(required_site_columns - set(sites.columns)))
+            )
+        else:
+            def normalise_match(value):
+                if pd.isna(value):
+                    return ""
+                return "".join(ch.lower() for ch in str(value).strip() if ch.isalnum())
+
+            def normalise_postcode(value):
+                return "".join(ch for ch in normalise_match(value) if ch.isalnum())
+
+            store_name_question = next(
+                (c for c in odp_question_columns
+                 if c.strip().casefold() == "please confirm the name of the waitrose store you tested:"),
+                None,
+            )
+            store_postcode_question = next(
+                (c for c in odp_question_columns
+                 if c.strip().casefold() == "please confirm the postcode of the waitrose store you tested:"),
+                None,
+            )
+
+            if store_name_question is None and store_postcode_question is None:
+                st.warning(
+                    "The ODP audit export does not contain the Waitrose store name or postcode questions, "
+                    "so the site details have been left unchanged."
+                )
+            else:
+                sites = sites.copy()
+                sites["_name_key"] = sites["name"].map(normalise_match)
+                sites["_postcode_key"] = sites["post_code"].map(normalise_postcode)
+                # Only use unique keys, so ambiguous matches never overwrite site details.
+                name_lookup = {
+                    key: group.iloc[0]
+                    for key, group in sites[sites["_name_key"].ne("")].groupby("_name_key")
+                    if len(group) == 1
+                }
+                postcode_lookup = {
+                    key: group.iloc[0]
+                    for key, group in sites[sites["_postcode_key"].ne("")].groupby("_postcode_key")
+                    if len(group) == 1
+                }
+
+                for row_idx in odp_report.index:
+                    matched_site = None
+                    if store_name_question and store_name_question in odp_source.columns:
+                        name_key = normalise_match(odp_source.iloc[row_idx][store_name_question])
+                        if name_key:
+                            matched_site = name_lookup.get(name_key)
+                    if matched_site is None and store_postcode_question and store_postcode_question in odp_source.columns:
+                        postcode_key = normalise_postcode(odp_source.iloc[row_idx][store_postcode_question])
+                        if postcode_key:
+                            matched_site = postcode_lookup.get(postcode_key)
+
+                    if matched_site is not None:
+                        odp_report.at[row_idx, "Premises Name"] = matched_site["name"]
+                        odp_report.at[row_idx, "Address1"] = matched_site["address_1"]
+                        odp_report.at[row_idx, "Address2"] = matched_site["address_2"]
+                        odp_report.at[row_idx, "Address3"] = matched_site["address_3"]
+                        odp_report.at[row_idx, "City"] = matched_site["city"] if "city" in sites.columns else pd.NA
+                        odp_report.at[row_idx, "Post Code"] = matched_site["post_code"]
+                        odp_report.at[row_idx, "Site Code"] = matched_site["code"]
+    except Exception as exc:
+        st.error(f"Could not read the Waitrose site export: {exc}")
+
 # Summary counts for the two report tabs.
 c1, c2, c3 = st.columns(3)
 c1.metric("Total audits in export", f"{len(raw):,}")
@@ -172,7 +248,7 @@ with tab_main:
     st.dataframe(main_report, use_container_width=True, hide_index=True)
 with tab_odp:
     st.subheader("ODPs")
-    st.caption("Only audits where Item to order is Rapid Delivery.")
+    st.caption("Only audits where Item to order is Rapid Delivery. If a Waitrose site export is uploaded, matched site details replace columns D–I and Q; unmatched rows remain unchanged.")
     st.dataframe(odp_report, use_container_width=True, hide_index=True)
 # One download button provides an Excel workbook containing exactly the two report sheets.
 buffer = io.BytesIO()
