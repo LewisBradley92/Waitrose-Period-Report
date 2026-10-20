@@ -121,6 +121,12 @@ def build_report(source):
 
     report["AM / PM"] = source["time_of_visit_local"].apply(to_ampm) if "time_of_visit_local" in source.columns else pd.NA
 
+    # Column N is Pass-Fail; always uppercase its values.
+    if "Pass-Fail" in report.columns:
+        report["Pass-Fail"] = report["Pass-Fail"].map(
+            lambda value: value.upper() if isinstance(value, str) else value
+        )
+
     # Current-period question columns follow the fixed A:T block.
     for column in question_columns:
         if column in source.columns and column not in report.columns:
@@ -148,25 +154,11 @@ with tab_main:
     st.subheader("Main report")
     st.caption("All exported audits except those with Item to order = Rapid Delivery.")
     st.dataframe(main_report, use_container_width=True, hide_index=True)
-    st.download_button(
-        "Download main report CSV",
-        data=main_report.to_csv(index=False).encode("utf-8-sig"),
-        file_name="main_report.csv",
-        mime="text/csv",
-    )
-
 with tab_odp:
     st.subheader("ODPs")
     st.caption("Only audits where Item to order is Rapid Delivery.")
     st.dataframe(odp_report, use_container_width=True, hide_index=True)
-    st.download_button(
-        "Download ODPs CSV",
-        data=odp_report.to_csv(index=False).encode("utf-8-sig"),
-        file_name="odps.csv",
-        mime="text/csv",
-    )
-
-# Excel output contains exactly the two report sheets.
+# One download button provides an Excel workbook containing exactly the two report sheets.
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     main_report.to_excel(writer, sheet_name="Main Report", index=False)
@@ -185,7 +177,7 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
 
 buffer.seek(0)
 st.download_button(
-    "Download completed Excel report",
+    "Download completed report (Excel)",
     data=buffer.getvalue(),
     file_name=f"audit_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
