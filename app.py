@@ -23,8 +23,17 @@ with st.sidebar:
         "All other audits appear on the main report tab."
     )
 
-if csv_file is None:
-    st.info("Upload this period's audit export CSV to get started.")
+if csv_file is None or waitrose_file is None:
+    missing_files = []
+    if csv_file is None:
+        missing_files.append("this period's audit export CSV")
+    if waitrose_file is None:
+        missing_files.append("the Waitrose site export CSV")
+    st.info(
+        "Please upload both files to generate the report. Still needed: "
+        + " and ".join(missing_files)
+        + "."
+    )
     st.stop()
 
 try:
@@ -305,4 +314,3 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
-
