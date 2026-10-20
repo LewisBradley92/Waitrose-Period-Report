@@ -1,3 +1,67 @@
+import io
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="Audit Report Builder", page_icon="📋", layout="wide")
+
+st.title("Audit Report Builder")
+st.caption(
+    "Upload this period's audit CSV to create a report. The report columns are built "
+    "from the current export, so changing question sets are supported automatically."
+)
+
+with st.sidebar:
+    st.header("Current period")
+    csv_file = st.file_uploader("Audit export (CSV)", type=["csv"])
+    st.divider()
+    st.caption(
+        "Audits where Item to order is exactly 'Rapid Delivery' are placed on the ODPs tab. "
+        "All other audits appear on the main report tab."
+    )
+
+if csv_file is None:
+    st.info("Upload this period's audit export CSV to get started.")
+    st.stop()
+
+try:
+    raw = pd.read_csv(csv_file, low_memory=False)
+except Exception as exc:
+    st.error(f"Could not read the CSV: {exc}")
+    st.stop()
+
+# Normalise header whitespace only; retain the current period's question wording.
+raw.columns = [str(column).strip() for column in raw.columns]
+
+# Accept common header variations, but require a clear Item to order field.
+item_column = next(
+    (
+        column for column in raw.columns
+        if column.casefold().replace("_", " ").strip() == "item to order"
+    ),
+    None,
+)
+if item_column is None:
+    st.error(
+        "The CSV does not contain an 'Item to order' column. "
+        "Please check the export's column headers."
+    )
+    st.stop()
+
+item_values = raw[item_column].fillna("").astype(str).str.strip()
+odp_mask = item_values.str.casefold().eq("rapid delivery")
+
+# Columns A:T are fixed to the established report layout (from the supplied
+# previous-period workbook). New/changed question columns are appended after T.
+FIXED_COLUMNS = [
+    "Order", "Visit", "Site", "Premises Name", "Address1", "Address2",
+    "Address3", "City", "Post Code", "Item to order", "Actual Visit Date",
+    "Actual Visit Time", "AM / PM", "Pass-Fail", "Pass-Fail2", "Abort Reason",
+    "Site Code", "Auditor Gender", "Extra Site 3", "Extra Site 4",
+]
+
+FIXED_COLUMN_MAP = {
     "Order": "order_internal_id",
     "Visit": "internal_id",
     "Site": "site_internal_id",
@@ -126,5 +190,4 @@ st.download_button(
     file_name=f"audit_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
-
-
+)
