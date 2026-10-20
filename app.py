@@ -101,7 +101,7 @@ question_columns = list(raw.columns[first_question:])
 # Only include actual question fields; don't duplicate any of the fixed columns.
 question_columns = [c for c in question_columns if c not in FIXED_COLUMN_MAP.values()]
 
-def build_report(source):
+def build_report(source, columns_to_include):
     report = pd.DataFrame(index=source.index)
     for target in FIXED_COLUMNS:
         source_column = FIXED_COLUMN_MAP.get(target, target)
@@ -128,13 +128,28 @@ def build_report(source):
         )
 
     # Current-period question columns follow the fixed A:T block.
-    for column in question_columns:
+    for column in columns_to_include:
         if column in source.columns and column not in report.columns:
             report[column] = source[column]
     return report.reset_index(drop=True)
 
-main_report = build_report(raw.loc[~odp_mask].copy())
-odp_report = build_report(raw.loc[odp_mask].copy())
+main_source = raw.loc[~odp_mask].copy()
+odp_source = raw.loc[odp_mask].copy()
+
+main_report = build_report(main_source, question_columns)
+
+# For ODPs, keep only question columns that have an actual answer in at least
+# one Rapid Delivery audit. This prevents unrelated/unused questions from
+# appearing on the ODPs tab while preserving the fixed A:T report layout.
+def has_answer(series):
+    values = series.dropna().astype(str).str.strip()
+    return values.ne("").any()
+
+odp_question_columns = [
+    column for column in question_columns
+    if column in odp_source.columns and has_answer(odp_source[column])
+]
+odp_report = build_report(odp_source, odp_question_columns)
 
 # Summary counts for the two report tabs.
 c1, c2, c3 = st.columns(3)
@@ -144,8 +159,9 @@ c3.metric("ODPs — Rapid Delivery", f"{len(odp_report):,}")
 
 st.caption(
     f"Columns A:T are fixed to the standard report layout. "
-    f"{len(question_columns):,} current-period question columns are appended after column T; "
-    "administrative export metadata is excluded."
+    f"{len(question_columns):,} current-period question columns are available for the main report. "
+    f"The ODPs tab includes only question columns answered in Rapid Delivery audits. "
+    "Administrative export metadata is excluded."
 )
 
 tab_main, tab_odp = st.tabs(["Main report", "ODPs"])
