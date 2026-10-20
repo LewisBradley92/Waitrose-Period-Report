@@ -69,7 +69,7 @@ FIXED_COLUMNS = [
     "Order", "Visit", "Site", "Premises Name", "Address1", "Address2",
     "Address3", "City", "Post Code", "Item to order", "Actual Visit Date",
     "Actual Visit Time", "AM / PM", "Pass-Fail", "Pass-Fail2", "Abort Reason",
-    "Site Code", "Auditor Gender", "Extra Site 3", "Extra Site 4",
+    "Site Code", "Auditor Gender", "Delivery Provider", "Extra Site 4",
 ]
 
 FIXED_COLUMN_MAP = {
@@ -90,7 +90,6 @@ FIXED_COLUMN_MAP = {
     "Abort Reason": "Please detail why you were unable to conduct this audit:",
     "Site Code": "site_code",
     "Auditor Gender": "auditor_gender",
-    "Extra Site 3": "Extra Site 3",
     "Extra Site 4": "Extra Site 4",
 }
 
@@ -161,6 +160,20 @@ odp_question_columns = [
     if column in odp_source.columns and has_answer(odp_source[column])
 ]
 odp_report = build_report(odp_source, odp_question_columns)
+
+# Column S records the delivery provider from the original site name, before
+# any Waitrose site lookup replaces the premises details.
+def delivery_provider(site_name):
+    if pd.isna(site_name):
+        return pd.NA
+    name = str(site_name).casefold()
+    for provider in ("Uber", "Just Eat", "Deliveroo"):
+        if provider.casefold() in name:
+            return provider
+    return pd.NA
+
+if "site_name" in odp_source.columns:
+    odp_report["Delivery Provider"] = odp_source["site_name"].apply(delivery_provider).to_numpy()
 
 # Optional Waitrose site lookup is applied to ODPs only. Match by the
 # auditor-provided store name first, then by postcode; unmatched rows stay as-is.
@@ -333,4 +346,3 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
-
