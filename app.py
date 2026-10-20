@@ -329,7 +329,8 @@ buffer.seek(0)
 st.download_button(
     "Download completed report (Excel)",
     data=buffer.getvalue(),
-    file_name=f"audit_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+    file_name="Waitrose Report.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
+
