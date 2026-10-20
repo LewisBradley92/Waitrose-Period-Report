@@ -168,13 +168,25 @@ if waitrose_file is not None:
     try:
         sites = pd.read_csv(waitrose_file, low_memory=False)
         sites.columns = [str(column).strip() for column in sites.columns]
-        required_site_columns = {"name", "address_1", "address_2", "address_3", "post_code", "code"}
+        required_site_columns = {"client_name", "name", "address_1", "address_2", "address_3", "post_code", "code"}
         if not required_site_columns.issubset(set(sites.columns)):
             st.error(
                 "The Waitrose site export is missing required columns: "
                 + ", ".join(sorted(required_site_columns - set(sites.columns)))
             )
         else:
+            # Restrict all matching to the requested client only. This prevents
+            # similarly named stores belonging to other clients being selected.
+            sites = sites.loc[
+                sites["client_name"].fillna("").astype(str).str.strip().str.casefold()
+                == "waitrose supermarkets".casefold()
+            ].copy()
+            if sites.empty:
+                st.error(
+                    "No sites with client name 'Waitrose Supermarkets' were found in the site export. "
+                    "Please check the client_name column and upload the correct export."
+                )
+                st.stop()
             def normalise_match(value):
                 if pd.isna(value):
                     return ""
@@ -230,18 +242,25 @@ if waitrose_file is not None:
                 )
             else:
                 sites = sites.copy()
+                # The site export can contain repeated rows for the same site.
+                # Collapse exact duplicate site codes before building lookups;
+                # otherwise a valid match (e.g. Waitrose Egham) is incorrectly
+                # treated as ambiguous just because the site appears twice.
+                sites["code"] = sites["code"].astype("string").str.strip()
+                sites = sites.drop_duplicates(subset=["code"], keep="first")
                 sites["_name_key"] = sites["name"].map(normalise_match)
                 sites["_postcode_key"] = sites["post_code"].map(normalise_postcode)
-                # Only use unique keys, so ambiguous matches never overwrite site details.
+                # Only use unique keys across distinct sites, so genuinely
+                # ambiguous names/postcodes never overwrite site details.
                 name_lookup = {
                     key: group.iloc[0]
                     for key, group in sites[sites["_name_key"].ne("")].groupby("_name_key")
-                    if len(group) == 1
+                    if group["code"].nunique(dropna=False) == 1
                 }
                 postcode_lookup = {
                     key: group.iloc[0]
                     for key, group in sites[sites["_postcode_key"].ne("")].groupby("_postcode_key")
-                    if len(group) == 1
+                    if group["code"].nunique(dropna=False) == 1
                 }
 
                 for row_idx in odp_report.index:
